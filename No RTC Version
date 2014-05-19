@@ -1,0 +1,352 @@
+// simple sketch to display a digital Alarm clock on an LCD keypad shield without RTC
+// see the LiquidCrystal documentation for more info on this
+// 
+
+/*
+The circuit:
+* LCD RS (Data or Signal Display Selection) pin to digital pin 8
+* LCD Enable pin to digital pin 9
+* LCD D4 pin to digital pin 4
+* LCD D5 pin to digital pin 5
+* LCD D6 pin to digital pin 6
+* LCD D7 pin to digital pin 7
+* LCD R/W pin to ground
+* 10K resistor:
+* ends to +5V and ground
+* wiper to LCD VO pin (pin 3)
+* Backlit Control to Digital 10
+* Button (select, up, right, down and left) to Analog 0
+*/
+
+
+#include <LiquidCrystal.h>
+// include header file for time function
+#include <Time.h>
+// Button defination for LCD Keypad shield
+#define btnRIGHT  0	 // Okay
+#define btnUP     1	 // inc
+#define btnDOWN   2	 // dec
+#define btnLEFT   3	 // Select
+#define btnSELECT 4	 // Menu
+#define btnNONE   5
+// Observed values:
+//     NONE:    1023
+//     SELECT:  723
+//     LEFT:    481
+//     DOWN:    307
+//     UP:      133
+//     RIGHT:   0
+
+#define beeper A1      // Alarm buzzer
+#define shortBeep 100
+#define longBeep  500
+
+#define TIME_MSG_LEN  11   // time sync to PC is HEADER followed by unix time_t as ten ascii digits
+#define TIME_HEADER  'T'   // Header tag for serial time sync message
+#define TIME_REQUEST  7    // ASCII bell character requests a time sync message 
+
+
+// define variables
+int lcd_key = 0;
+int adc_key_in = 0;
+int lastDay = 0;
+int lastMonth = 0;
+int lastYear = 0;
+int lastHour = 0;
+int lastMinute = 0;
+int movementTimer = 0;
+int menuOptions = 4;
+int menuOption = 0;
+int alarmHours = 0;
+int alarmMinutes = 0;
+bool alarmSet = 0;
+bool backLightOn = 1;
+int fadeValue = 255;
+
+
+// define constants
+const int backLight = 10; // pin 10 will control the LCD backlight
+
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
+void setup()
+{
+pinMode(backLight, OUTPUT);
+pinMode(beeper, OUTPUT);
+digitalWrite(backLight, HIGH); // turn backlight on. Replace 'HIGH' with 'LOW' to turn it off.
+Serial.begin(9600);
+setSyncProvider( requestSync);  //set function to call when sync required
+}
+
+void loop(){ 
+  if(Serial.available() ) 
+  {
+    processSyncMessage();
+  }
+  else
+  if(timeStatus()== timeNotSet)  
+{
+//    setTime(1356210000);
+setTime(8, 0, 0, 20, 1, 2013); // hour, min, sec, day, month, year 
+// Replace this with the most current time
+}
+    
+if(timeStatus()!= timeNotSet)   
+{
+digitalWrite(13,timeStatus() == timeSet); // on if synced, off if needs refresh  
+digitalClockDisplay();  
+}
+
+for (int i = 0; i < 9000; i++)
+{
+button_loop(); //check for button pushed
+}
+}
+
+void printDigits(byte digits){
+// utility function for digital clock display: prints preceding colon and leading 0
+lcd.print(":");
+if(digits < 10)
+lcd.print('0');
+lcd.print(digits,DEC);
+}
+
+
+void digitalClockDisplay(){
+//lcd.clear();
+lcd.begin(16,2);
+lcd.setCursor(3,0);
+        lcd.print("          ");
+lcd.setCursor(3,1);
+        lcd.print("          ");
+lcd.setCursor(3,0);
+if(day() <10)
+lcd.print('0');
+lcd.print(day(),DEC);
+lcd.print("/");
+
+if(month() <10)
+lcd.print('0');
+lcd.print(month(),DEC);
+lcd.print("/");
+lcd.print((year()));
+
+//lcd.print(" ");
+if(hour() <10)
+lcd.setCursor(5,1);
+lcd.setCursor(4,1);
+
+// digital clock display of current time
+lcd.print(hour(),DEC);
+printDigits(minute());
+printDigits(second());
+// for time set
+    lastDay = day();
+    lastMonth = month();
+    lastYear = year();
+    lastHour = hour();
+    lastMinute = minute();
+        
+          //check for alarm
+  if (alarmSet)
+  {
+    // alarm set 
+    if (alarmHours == lastHour && alarmMinutes == lastMinute)
+    {
+      //sound alarm
+      setOffAlarm();
+    } 
+  }
+}
+
+void processSyncMessage() {
+  // if time sync available from serial port, update time and return true
+  while(Serial.available() >=  TIME_MSG_LEN ){  // time message consists of a header and ten ascii digits
+    char c = Serial.read() ; 
+    Serial.print(c);  
+    if( c == TIME_HEADER ) {       
+      time_t pctime = 0;
+      for(int i=0; i < TIME_MSG_LEN -1; i++){   
+        c = Serial.read();          
+        if( c >= '0' && c <= '9'){   
+          pctime = (10 * pctime) + (c - '0') ; // convert digits to a number    
+        }
+      }   
+      setTime(pctime);   // Sync Arduino clock to the time received on the serial port
+    }  
+  }
+}
+
+time_t requestSync()
+{
+  Serial.write(TIME_REQUEST);  
+  return 0; // the time will be sent later in response to serial mesg
+}
+
+
+void button_loop()
+{
+  int button = read_LCD_buttons();
+  if (button == btnSELECT)
+  {
+    timedBeep(shortBeep,1); 
+    selectMenu();
+  }
+   if (button == btnDOWN)
+  {
+    fadeValue = fadeValue -5;
+    if (fadeValue < 5) { fadeValue = 0; }
+analogWrite (backLight, fadeValue); 
+    delay (100);	
+  }
+  if (button == btnUP)
+  {
+fadeValue = fadeValue +5;
+if (fadeValue > 254) { fadeValue = 255; }
+    	analogWrite (backLight, fadeValue); 
+delay (100);
+  }  
+}
+
+void selectMenu()
+{
+  int button = 0; 
+  menuOption = 1;
+  lcdClear();
+  lcd.print("Minute Timer");  
+
+  while (menuOption <= menuOptions)
+  {
+    button = read_LCD_buttons();
+    if (button == btnSELECT)
+    {
+      timedBeep(shortBeep,1);   
+      menuOption++;
+
+      if (menuOption == 2)
+      {
+        lcdClear();
+        // clearAlarm feature
+        lcd.print("Set/Clear Alarm");            
+      }
+      if (menuOption == 3)
+      {
+        lcdClear();
+        lcd.print("Set Date/Time");            
+      }
+      if (menuOption == 4)
+      {
+        lcdClear();
+        lcd.print("Stop Watch Timer");            
+      }
+    } 
+
+    if (button == btnLEFT)
+    {
+      if (menuOption == 1)
+      {
+        timedBeep(shortBeep,1);
+        minuteTimer();
+        return;
+      }
+      if (menuOption == 2)
+      {
+        timedBeep(shortBeep,1);
+        // clearAlarm feature
+        //check for existing alarm
+        if (alarmSet)
+        {
+          clearAlarm();
+        }
+        else
+        {
+          setAlarm();
+        }
+        return;
+      }
+      if (menuOption == 3)
+      {
+        timedBeep(shortBeep,1);
+        // setDateTime feature
+        setDateTime();
+        return;
+      } 
+      if (menuOption == 4)
+      {
+timedBeep(shortBeep,1);
+stopwatch_time_counter();
+return;
+      }
+    }
+  }
+}  
+
+// clearAlarm feature
+void clearAlarm()
+{
+  int button = 0;
+  bool clearIt = true;
+
+  lcdClear();
+  lcd.print("Alarm Set For");
+  lcd.setCursor(0,1);
+  lcd.print(alarmHours);   
+  lcd.print(":");
+  lcd.print(alarmMinutes);
+  delay(2000);
+  lcdClear();
+  lcd.print("Clear Alarm?");
+  lcd.setCursor(0,1);
+  lcd.print("Yes");  
+
+  while (button != btnSELECT)
+  {
+    button = read_LCD_buttons();
+    if (button == btnUP)
+    {
+      timedBeep(shortBeep,1);
+      clearIt = !clearIt;
+    }
+    if (button == btnDOWN)
+    {
+      timedBeep(shortBeep,1);
+      clearIt = !clearIt;
+    }
+    if (button == btnRIGHT)
+    {
+      timedBeep(shortBeep,1);
+      alarmSet = !clearIt;
+      if (clearIt)
+      {
+        lcdClear();
+        timedBeep(shortBeep,2);
+        lcd.print("Alarm Cleared!");
+        delay(2000);
+      }
+      return; 
+    }
+    lcd.setCursor(0,1);
+    if (clearIt)
+    {
+      lcd.print("Yes"); 
+    }
+    else{
+      lcd.print("No ");
+    }
+  }   
+}
+
+void minuteTimer()
+{
+  // Pass maxCount to getTimerMinutes
+  int timerMinutes = getTimerMinutes("Set Minutes", 0, 60);
+  if (timerMinutes > 0)
+  {
+    timedCountDown(timerMinutes*60, "Minute Timer");
+  }
+  else
+  {
+    timerCancelled("Timer");       
+  }
+  return;
+}
