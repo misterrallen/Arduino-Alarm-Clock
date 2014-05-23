@@ -446,6 +446,7 @@ void digitalClockDisplay()
     }
     else
     {
+      // Added a loop to make sure the right time of the day is shown.
       LcdString(now.hour(), DEC);
       printDigits(now.minute());
       clockPM = false;      
